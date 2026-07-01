@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/auth.store';
 import {
+  Map,
   MonitorPlay,
   History,
   Server,
@@ -10,9 +11,10 @@ import {
 } from 'lucide-react';
 
 const NAV_ITEMS = [
-  { to: '/', icon: MonitorPlay, label: 'Live View' },
-  { to: '/playback', icon: History, label: 'Playback' },
-  { to: '/devices', icon: Server, label: 'Devices' },
+  { to: '/admin', icon: Map, label: 'Layouts' },
+  { to: '/admin/live', icon: MonitorPlay, label: 'Live View' },
+  { to: '/admin/playback', icon: History, label: 'Playback' },
+  { to: '/admin/devices', icon: Server, label: 'Devices' },
 ];
 
 export function Sidebar() {
@@ -43,7 +45,7 @@ export function Sidebar() {
           <NavLink
             key={to}
             to={to}
-            end={to === '/'}
+            end={to === '/admin'}
             className={({ isActive }) =>
               `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${
                 isActive

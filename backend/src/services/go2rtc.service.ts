@@ -36,6 +36,12 @@ const GO2RTC_TIMEOUT_MS = 5000;
 export class Go2rtcService {
   private static readonly baseUrl = env.GO2RTC_API_URL;
 
+  // Dedupe cache for addStream: maps stream name → {url, ts}. A repeat request
+  // for the same name+url within DEDUPE_WINDOW_MS skips the redundant PUT. A
+  // different url is never skipped, so an edited override re-registers.
+  private static readonly streamRegisteredAt = new Map<string, { url: string; ts: number }>();
+  private static readonly DEDUPE_WINDOW_MS = 60_000;
+
   /**
    * Authorization header for backend→go2rtc calls when go2rtc Basic auth is on.
    * Returns an empty object when no credentials are configured (default).
@@ -67,6 +73,11 @@ export class Go2rtcService {
    * If the stream already exists, it will be replaced.
    */
   static async addStream(name: string, rtspUrl: string): Promise<boolean> {
+    // Skip the redundant PUT if we registered this exact name+url very recently.
+    const cached = this.streamRegisteredAt.get(name);
+    if (cached && cached.url === rtspUrl && Date.now() - cached.ts < this.DEDUPE_WINDOW_MS) {
+      return true;
+    }
     try {
       // go2rtc's PUT /api/streams expects the source in the `src` query param,
       // not a JSON body. A JSON body is silently ignored (returns 200 but creates
@@ -88,6 +99,7 @@ export class Go2rtcService {
         return false;
       }
 
+      this.streamRegisteredAt.set(name, { url: rtspUrl, ts: Date.now() });
       logger.info({ name }, 'Stream added to go2rtc');
       return true;
     } catch (err) {
@@ -216,14 +228,21 @@ export class Go2rtcService {
    */
   static async unregisterNvrStreams(nvrId: number): Promise<void> {
     const streams = await this.listStreams();
-
     const prefix = `nvr_${nvrId}_`;
-    const toRemove = Object.keys(streams).filter((name) => name.startsWith(prefix));
-
-    for (const name of toRemove) {
-      await this.removeStream(name);
+    for (const [name, info] of Object.entries(streams)) {
+      if (!name.startsWith(prefix)) continue;
+      this.streamRegisteredAt.delete(name);
+      // go2rtc DELETE identifies a stream by its producer `src` URL, not by name.
+      for (const producer of info.producers ?? []) {
+        try {
+          await fetch(
+            `${this.baseUrl}/api/streams?src=${encodeURIComponent(producer.url)}`,
+            { method: 'DELETE', headers: this.authHeaders(), signal: AbortSignal.timeout(GO2RTC_TIMEOUT_MS) },
+          );
+        } catch (err) {
+          logger.error({ name, error: err }, 'go2rtc unregister error');
+        }
+      }
     }
-
-    logger.info({ nvrId, removed: toRemove.length }, 'NVR streams unregistered');
   }
 }

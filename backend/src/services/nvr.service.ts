@@ -7,6 +7,7 @@ import type {
   CameraRow,
   CreateNvrInput,
   UpdateNvrInput,
+  UpdateCameraInput,
 } from '../models/schemas.js';
 
 /**
@@ -99,6 +100,61 @@ export class NvrService {
     return db
       .prepare('SELECT * FROM cameras WHERE nvr_id = ? ORDER BY channel')
       .all(nvrId) as CameraRow[];
+  }
+
+  static getCamera(nvrId: number, channel: number): CameraRow | undefined {
+    return db
+      .prepare('SELECT * FROM cameras WHERE nvr_id = ? AND channel = ?')
+      .get(nvrId, channel) as CameraRow | undefined;
+  }
+
+  /**
+   * Update admin-editable fields (name/enabled/rtsp_override) for one camera.
+   * Returns the updated row, or null if the camera does not exist.
+   */
+  static updateCamera(
+    nvrId: number,
+    channel: number,
+    input: UpdateCameraInput,
+  ): CameraRow | null {
+    const existing = this.getCamera(nvrId, channel);
+    if (!existing) return null;
+
+    const name = input.name ?? existing.name;
+    const enabled = input.enabled !== undefined ? (input.enabled ? 1 : 0) : existing.enabled;
+    const rtspOverride =
+      input.rtsp_override !== undefined ? input.rtsp_override : existing.rtsp_override;
+
+    db.prepare(`
+      UPDATE cameras
+      SET name = ?, enabled = ?, rtsp_override = ?, updated_at = datetime('now')
+      WHERE nvr_id = ? AND channel = ?
+    `).run(name, enabled, rtspOverride, nvrId, channel);
+
+    logger.info({ nvrId, channel }, 'Camera updated');
+    return this.getCamera(nvrId, channel)!;
+  }
+
+  /**
+   * Resolve the RTSP source URL for a channel. A non-empty per-camera
+   * rtsp_override takes precedence; otherwise the Hanwha URL is derived.
+   */
+  static resolveRtspUrl(nvr: NvrDeviceRow, channel: number): string {
+    const camera = this.getCamera(nvr.id, channel);
+    if (camera && typeof camera.rtsp_override === 'string' && camera.rtsp_override.trim() !== '') {
+      const override = camera.rtsp_override.trim();
+      // Defense-in-depth: only honor an rtsp/rtsps override. Anything else (e.g.
+      // go2rtc exec:/pipe: sources) is rejected and we fall back to the derived
+      // Hanwha URL, so a bad/legacy DB value can't inject a dangerous source.
+      if (/^rtsps?:\/\//i.test(override)) {
+        return override;
+      }
+      logger.warn(
+        { nvrId: nvr.id, channel },
+        'Ignoring non-rtsp rtsp_override; falling back to derived Hanwha URL',
+      );
+    }
+    return HanwhaService.buildRtspUrl(nvr, channel);
   }
 
   /**

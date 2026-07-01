@@ -3,10 +3,15 @@ import { Sidebar } from './Sidebar';
 import { useAuthStore } from '../../stores/auth.store';
 
 export function AppLayout() {
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, role } = useAuthStore();
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
+  }
+
+  // The admin area is admin-only; authenticated non-admins go to the public viewer.
+  if (role !== 'admin') {
+    return <Navigate to="/" replace />;
   }
 
   return (

@@ -15,6 +15,8 @@ import { errorHandler } from './middleware/error.middleware.js';
 import authRoutes from './routes/auth.routes.js';
 import nvrRoutes from './routes/nvr.routes.js';
 import streamRoutes from './routes/stream.routes.js';
+import layoutRoutes from './routes/layout.routes.js';
+import publicRoutes from './routes/public.routes.js';
 
 // App version (read from package.json) so the running server can self-report it.
 function readAppVersion(): string {
@@ -63,6 +65,17 @@ async function bootstrap(): Promise<void> {
     }),
   );
 
+  // Tighter limiter for the unauthenticated public namespace. Mounted BEFORE the
+  // general /api limiter so public traffic hits this stricter budget first.
+  app.use(
+    '/api/public',
+    rateLimit({
+      windowMs: 60_000,
+      max: 30,
+      message: { success: false, data: null, error: 'Rate limit exceeded' },
+    }),
+  );
+
   app.use(
     '/api',
     rateLimit({
@@ -76,6 +89,8 @@ async function bootstrap(): Promise<void> {
   app.use('/api/auth', authRoutes);
   app.use('/api/nvr', nvrRoutes);
   app.use('/api/streams', streamRoutes);
+  app.use('/api/layouts', layoutRoutes);
+  app.use('/api/public', publicRoutes);
 
   // Health check (no auth required)
   app.get('/api/health', (_req, res) => {

@@ -43,17 +43,15 @@ export function Playback() {
       const mins = currentTime % 60;
       const time = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
 
-      const result = await api.getPlaybackUrls(
-        selectedNvrId,
-        selectedCamera.channel,
-        selectedDate,
+      const result = await api.getPlaybackUrls(selectedNvrId, selectedCamera.channel, {
+        date: selectedDate,
         time,
-        duration * 60, // convert to seconds
-      );
+        duration: duration * 60, // convert to seconds
+      });
 
       setPlaybackStream(result);
-    } catch (err) {
-      console.error('Playback error:', err);
+    } catch {
+      // Playback fetch failed; stream stays null and the empty state is shown.
     } finally {
       setIsLoading(false);
     }

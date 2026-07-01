@@ -31,6 +31,12 @@
   --duration-fast: 150ms;
   --duration-normal: 250ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Airgapped LAN: no external fonts. JetBrains Mono is used when locally
+     installed, otherwise falls back through the system monospace stack. */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', 'Cascadia Code',
+    'Menlo', 'Consolas', monospace;
 }
 
 /* ── Base ────────────────────────────────────────────────── */
@@ -42,7 +48,11 @@ html, body, #root {
 body {
   background: var(--color-bg);
   color: var(--color-text);
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: var(--font-sans);
+}
+
+.font-mono {
+  font-family: var(--font-mono);
 }
 
 /* ── Scrollbar ───────────────────────────────────────────── */
@@ -123,6 +133,89 @@ body {
   height: 12px;
   background: var(--color-accent);
   border-radius: 50%;
+}
+
+/* ── Floor-plan Stage ────────────────────────────────────── */
+.layout-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background-color: var(--color-surface);
+}
+
+/* Neutral blueprint grid used when a layout has no uploaded image. */
+.layout-stage--grid {
+  background-image:
+    linear-gradient(var(--color-border-subtle) 1px, transparent 1px),
+    linear-gradient(90deg, var(--color-border-subtle) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* Glowing sky-blue camera marker pill. */
+.cam-marker {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  color: #fff;
+  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
+  border: 1px solid rgba(147, 197, 253, 0.7);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18), 0 4px 14px rgba(59, 130, 246, 0.45);
+  cursor: pointer;
+  transition:
+    transform var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.cam-marker:hover {
+  transform: translate(-50%, -50%) scale(1.08);
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.28), 0 6px 20px rgba(59, 130, 246, 0.6);
+}
+
+.cam-marker--selected {
+  border-color: #fff;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.35), 0 6px 20px rgba(59, 130, 246, 0.6);
+}
+
+.cam-marker--draggable {
+  cursor: grab;
+  touch-action: none;
+}
+
+.cam-marker--draggable:active {
+  cursor: grabbing;
+}
+
+/* ── Floating Camera Popup ───────────────────────────────── */
+.cam-popup {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-elevated);
+  overflow: hidden;
+}
+
+.cam-popup__header {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.cam-popup__header:active {
+  cursor: grabbing;
 }
 
 /* ── Status Indicators ───────────────────────────────────── */

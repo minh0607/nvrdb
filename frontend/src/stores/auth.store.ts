@@ -1,6 +1,43 @@
 import { create } from 'zustand';
 import { api } from '../lib/api';
 
+interface TokenPayload {
+  userId: number;
+  username: string;
+  role: 'admin' | 'viewer';
+  exp?: number;
+}
+
+/**
+ * Decode the JWT payload client-side to recover username/role after a page
+ * reload (the token lives in localStorage but the store state does not). Returns
+ * null for a missing, malformed, or expired token. This is NOT a security check
+ * — the backend still verifies the signature on every request; it only restores
+ * UI role state so an admin isn't bounced from /admin after refresh.
+ */
+function decodeToken(token: string | null): TokenPayload | null {
+  if (!token) return null;
+  try {
+    const part = token.split('.')[1];
+    if (!part) return null;
+    const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    const json = decodeURIComponent(
+      atob(b64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join(''),
+    );
+    const payload = JSON.parse(json) as TokenPayload;
+    if (payload.exp && payload.exp * 1000 <= Date.now()) return null;
+    if (payload.role !== 'admin' && payload.role !== 'viewer') return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+const initialSession = decodeToken(api.getToken());
+
 interface AuthState {
   isAuthenticated: boolean;
   username: string | null;
@@ -14,9 +51,9 @@ interface AuthState {
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
-  isAuthenticated: !!api.getToken(),
-  username: null,
-  role: null,
+  isAuthenticated: !!initialSession,
+  username: initialSession?.username ?? null,
+  role: initialSession?.role ?? null,
   isLoading: false,
   error: null,
 
@@ -49,9 +86,12 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   checkAuth: () => {
-    const hasToken = !!api.getToken();
-    if (!hasToken) {
+    const session = decodeToken(api.getToken());
+    if (!session) {
+      api.logout();
       set({ isAuthenticated: false, username: null, role: null });
+    } else {
+      set({ isAuthenticated: true, username: session.username, role: session.role });
     }
   },
 }));
