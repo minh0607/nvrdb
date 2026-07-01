@@ -5,6 +5,7 @@ import { Go2rtcService } from '../services/go2rtc.service.js';
 import {
   createNvrSchema,
   updateNvrSchema,
+  updateCameraSchema,
   successResponse,
   errorResponse,
 } from '../models/schemas.js';
@@ -133,7 +134,11 @@ router.get('/:id/cameras', async (req: Request, res: Response, next: NextFunctio
       cameras = await NvrService.syncCameras(nvrId);
     }
 
-    res.json(successResponse(cameras));
+    // rtsp_override can embed NVR credentials, so it must not leak to non-admins.
+    // Admins keep it (the editor displays the current override).
+    const isAdmin = req.user?.role === 'admin';
+    const out = cameras.map((c) => (isAdmin ? c : (({ rtsp_override, ...rest }) => rest)(c)));
+    res.json(successResponse(out));
   } catch (err) {
     next(err);
   }
@@ -194,6 +199,32 @@ router.post(
       const nvrId = Number(req.params.id);
       const cameras = await NvrService.syncCameras(nvrId);
       res.json(successResponse(cameras));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
+ * PUT /api/nvr/:nvrId/cameras/:channel
+ * Update a camera's editable fields (name/enabled/rtsp_override). Admin only.
+ */
+router.put(
+  '/:nvrId/cameras/:channel',
+  adminOnly,
+  (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const nvrId = Number(req.params.nvrId);
+      const channel = Number(req.params.channel);
+      const input = updateCameraSchema.parse(req.body);
+      const camera = NvrService.updateCamera(nvrId, channel, input);
+
+      if (!camera) {
+        res.status(404).json(errorResponse('Camera not found'));
+        return;
+      }
+
+      res.json(successResponse(camera));
     } catch (err) {
       next(err);
     }

@@ -13,7 +13,7 @@ export function LoginPage() {
     e.preventDefault();
     try {
       await login(username, password);
-      navigate('/');
+      navigate('/admin');
     } catch {
       // error is set in the store
     }

@@ -61,6 +61,56 @@ export const cameraSchema = z.object({
 
 export type CameraInput = z.infer<typeof cameraSchema>;
 
+/**
+ * Admin-editable camera fields: display name, enabled flag, and an optional
+ * per-camera RTSP override that supersedes the derived Hanwha URL when set.
+ */
+export const updateCameraSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  enabled: z.boolean().optional(),
+  rtsp_override: z
+    .string()
+    .max(500)
+    .regex(/^rtsps?:\/\//i, 'rtsp_override must start with rtsp:// or rtsps://')
+    .nullable()
+    .optional(),
+});
+
+export type UpdateCameraInput = z.infer<typeof updateCameraSchema>;
+
+// ── Layout ──────────────────────────────────────────────────
+
+export const createLayoutSchema = z.object({
+  name: z.string().min(1).max(100),
+});
+
+export const updateLayoutSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+});
+
+export type CreateLayoutInput = z.infer<typeof createLayoutSchema>;
+export type UpdateLayoutInput = z.infer<typeof updateLayoutSchema>;
+
+// ── Layout Placement ────────────────────────────────────────
+// x and y are percentages (0..100) of the floor-plan image dimensions.
+
+export const createPlacementSchema = z.object({
+  nvr_id: z.number().int().positive(),
+  channel: z.number().int().positive(),
+  label: z.string().max(100).nullable().optional(),
+  x: z.number().min(0).max(100),
+  y: z.number().min(0).max(100),
+});
+
+export const updatePlacementSchema = z.object({
+  x: z.number().min(0).max(100).optional(),
+  y: z.number().min(0).max(100).optional(),
+  label: z.string().max(100).nullable().optional(),
+});
+
+export type CreatePlacementInput = z.infer<typeof createPlacementSchema>;
+export type UpdatePlacementInput = z.infer<typeof updatePlacementSchema>;
+
 // ── Auth ────────────────────────────────────────────────────
 
 export const loginSchema = z.object({
@@ -130,8 +180,29 @@ export interface CameraRow {
   fps: number;
   enabled: number;
   ptz_supported: number;
+  rtsp_override: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface LayoutRow {
+  id: number;
+  name: string;
+  image_path: string | null;
+  image_mime: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlacementRow {
+  id: number;
+  layout_id: number;
+  nvr_id: number;
+  channel: number;
+  label: string | null;
+  x: number;
+  y: number;
+  created_at: string;
 }
 
 export interface StreamSessionRow {

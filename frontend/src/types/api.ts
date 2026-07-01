@@ -52,6 +52,7 @@ export interface Camera {
   fps: number;
   enabled: number;
   ptz_supported: number;
+  rtsp_override: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -92,6 +93,32 @@ export interface LoginResponse {
     role: 'admin' | 'viewer';
     created_at: string;
   };
+}
+
+// ── Floor-plan Layout ───────────────────────────────────
+
+export interface Layout {
+  id: number;
+  name: string;
+  image_mime: string | null;
+  has_image: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Placement {
+  id: number;
+  layout_id: number;
+  nvr_id: number;
+  channel: number;
+  label: string | null;
+  x: number;
+  y: number;
+  created_at: string;
+}
+
+export interface LayoutDetail extends Layout {
+  placements: Placement[];
 }
 
 // ── Grid Layout ─────────────────────────────────────────
