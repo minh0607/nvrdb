@@ -22,10 +22,28 @@ export interface NvrDevice {
   model: string;
   max_channels: number;
   stream_profile: number | null;
+  /** Area (building zone) this NVR belongs to. null = ungrouped. */
+  area_id: number | null;
   status: 'online' | 'offline' | 'error';
   last_checked_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// ── Public (no-auth) NVR + Camera ───────────────────────
+
+export interface PublicNvr {
+  id: number;
+  name: string;
+  max_channels: number;
+  /** Area (building zone) this NVR belongs to. null = ungrouped. */
+  area_id: number | null;
+}
+
+export interface PublicCamera {
+  channel: number;
+  name: string;
+  enabled: boolean;
 }
 
 export interface CreateNvrInput {
@@ -38,6 +56,8 @@ export interface CreateNvrInput {
   model?: string;
   max_channels?: number;
   stream_profile?: number | null;
+  /** Area (building zone) to assign this NVR to. null/omitted = ungrouped. */
+  area_id?: number | null;
 }
 
 // ── Camera ──────────────────────────────────────────────
@@ -95,6 +115,15 @@ export interface LoginResponse {
   };
 }
 
+// ── Area (building zone grouping layouts) ───────────────
+
+export interface Area {
+  id: number;
+  name: string;
+  sort_order: number;
+  created_at: string;
+}
+
 // ── Floor-plan Layout ───────────────────────────────────
 
 export interface Layout {
@@ -102,9 +131,17 @@ export interface Layout {
   name: string;
   image_mime: string | null;
   has_image: boolean;
+  /** Optional frame aspect (pixels). null = derive from image / default 16:9. */
+  width: number | null;
+  height: number | null;
+  /** Area this layout belongs to. null = ungrouped ("General"). */
+  area_id: number | null;
   created_at: string;
   updated_at: string;
 }
+
+// How a placement's live video is opened: browser go2rtc player or external VLC.
+export type ViewMode = 'go2rtc' | 'vlc';
 
 export interface Placement {
   id: number;
@@ -114,6 +151,30 @@ export interface Placement {
   label: string | null;
   x: number;
   y: number;
+  /** Per-placement view-mode override. null = fall back to the global default. */
+  view_mode: ViewMode | null;
+  created_at: string;
+  /** Current camera name (JOIN result); used as a fallback marker label. */
+  camera_name?: string | null;
+}
+
+// ── App Settings ────────────────────────────────────────
+
+export interface AppSettings {
+  default_view_mode: ViewMode;
+  /**
+   * URL to the VLC installer .exe used by the downloadable setup script.
+   * Admin-only: present only for authenticated admins; undefined for viewers.
+   */
+  vlc_download_url?: string;
+}
+
+// ── Access Control (IP allowlist) ───────────────────────
+
+export interface AllowedIp {
+  id: number;
+  ip: string;
+  label: string | null;
   created_at: string;
 }
 

@@ -7,6 +7,7 @@ import {
   Server,
   LogOut,
   Shield,
+  Lock,
   Activity,
 } from 'lucide-react';
 
@@ -15,6 +16,7 @@ const NAV_ITEMS = [
   { to: '/admin/live', icon: MonitorPlay, label: 'Live View' },
   { to: '/admin/playback', icon: History, label: 'Playback' },
   { to: '/admin/devices', icon: Server, label: 'Devices' },
+  { to: '/admin/access', icon: Lock, label: 'IP Restrictions' },
 ];
 
 export function Sidebar() {

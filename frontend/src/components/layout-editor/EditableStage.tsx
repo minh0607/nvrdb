@@ -80,7 +80,14 @@ export function EditableStage({
       <div
         ref={stageRef}
         className={`layout-stage max-w-full max-h-full ${detail.has_image ? '' : 'layout-stage--grid'}`}
-        style={{ aspectRatio: dims ? `${dims.w} / ${dims.h}` : '16 / 9' }}
+        style={{
+          aspectRatio:
+            detail.width && detail.height
+              ? `${detail.width} / ${detail.height}`
+              : dims
+                ? `${dims.w} / ${dims.h}`
+                : '16 / 9',
+        }}
       >
         {detail.has_image && imageUrl && (
           <img
@@ -92,7 +99,7 @@ export function EditableStage({
         )}
 
         {detail.placements.map((p) => {
-          const label = p.label?.trim() || `CH${p.channel}`;
+          const label = p.label?.trim() || p.camera_name?.trim() || `CH${p.channel}`;
           return (
             <button
               key={p.id}

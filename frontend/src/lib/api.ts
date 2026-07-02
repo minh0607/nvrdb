@@ -1,5 +1,8 @@
 import type {
+  AllowedIp,
   ApiResponse,
+  AppSettings,
+  Area,
   Camera,
   CreateNvrInput,
   Layout,
@@ -9,7 +12,10 @@ import type {
   NvrStream,
   Placement,
   PlaybackStreamUrls,
+  PublicCamera,
+  PublicNvr,
   StreamUrls,
+  ViewMode,
 } from '../types/api';
 
 /**
@@ -145,9 +151,81 @@ export const api = {
     return request<PlaybackStreamUrls>(`/streams/playback/${nvrId}/${channel}?${q.toString()}`);
   },
 
+  // ── public NVRs + cameras (no auth) ───────────────────────
+  getPublicNvrs(): Promise<PublicNvr[]> {
+    return request<PublicNvr[]>('/public/nvrs', { auth: false });
+  },
+
+  getPublicNvrCameras(id: number): Promise<PublicCamera[]> {
+    return request<PublicCamera[]>(`/public/nvrs/${id}/cameras`, { auth: false });
+  },
+
   // ── public streams (no auth) ──────────────────────────────
   getPublicStreamUrls(nvrId: number, channel: number): Promise<StreamUrls> {
     return request<StreamUrls>(`/public/streams/${nvrId}/${channel}`, { auth: false });
+  },
+
+  /** Resolve the raw RTSP URL so the OS can hand it off to VLC (no auth). */
+  getVlcUrl(nvrId: number, channel: number): Promise<{ rtsp: string }> {
+    return request<{ rtsp: string }>(`/public/vlc/${nvrId}/${channel}`, { auth: false });
+  },
+
+  // ── app settings ──────────────────────────────────────────
+  getSettings(): Promise<AppSettings> {
+    // auth: true so a logged-in admin's token is sent and the response includes
+    // vlc_download_url. The request helper omits the Authorization header when no
+    // token exists, so anonymous viewers still work and just get default_view_mode.
+    return request<AppSettings>('/settings', { auth: true });
+  },
+
+  updateSettings(
+    patch: { default_view_mode?: ViewMode; vlc_download_url?: string },
+  ): Promise<AppSettings> {
+    return request<AppSettings>('/settings', {
+      method: 'PUT',
+      body: patch,
+    });
+  },
+
+  /** Same-origin URL of the downloadable VLC setup script. */
+  vlcSetupUrl(): string {
+    return '/api/public/vlc-setup.ps1';
+  },
+
+  // ── areas (layout grouping) ───────────────────────────────
+  listAreas(): Promise<Area[]> {
+    return request<Area[]>('/areas', { auth: false });
+  },
+
+  createArea(name: string): Promise<Area> {
+    return request<Area>('/areas', { method: 'POST', body: { name } });
+  },
+
+  updateArea(
+    id: number,
+    patch: { name?: string; sort_order?: number },
+  ): Promise<Area> {
+    return request<Area>(`/areas/${id}`, { method: 'PUT', body: patch });
+  },
+
+  deleteArea(id: number): Promise<{ deleted: boolean }> {
+    return request<{ deleted: boolean }>(`/areas/${id}`, { method: 'DELETE' });
+  },
+
+  // ── access control (IP allowlist) ─────────────────────────
+  listAllowedIps(): Promise<AllowedIp[]> {
+    return request<AllowedIp[]>('/allowed-ips');
+  },
+
+  addAllowedIp(ip: string, label?: string): Promise<AllowedIp> {
+    return request<AllowedIp>('/allowed-ips', {
+      method: 'POST',
+      body: { ip, label },
+    });
+  },
+
+  deleteAllowedIp(id: number): Promise<{ deleted: boolean }> {
+    return request<{ deleted: boolean }>(`/allowed-ips/${id}`, { method: 'DELETE' });
   },
 
   // ── floor-plan layouts ────────────────────────────────────
@@ -163,8 +241,16 @@ export const api = {
     return request<Layout>('/layouts', { method: 'POST', body: { name } });
   },
 
-  updateLayout(id: number, name: string): Promise<Layout> {
-    return request<Layout>(`/layouts/${id}`, { method: 'PUT', body: { name } });
+  updateLayout(
+    id: number,
+    patch: {
+      name?: string;
+      width?: number | null;
+      height?: number | null;
+      area_id?: number | null;
+    },
+  ): Promise<Layout> {
+    return request<Layout>(`/layouts/${id}`, { method: 'PUT', body: patch });
   },
 
   deleteLayout(id: number): Promise<{ deleted: boolean }> {
@@ -215,7 +301,14 @@ export const api = {
   // ── placements ────────────────────────────────────────────
   addPlacement(
     layoutId: number,
-    body: { nvr_id: number; channel: number; label?: string; x: number; y: number },
+    body: {
+      nvr_id: number;
+      channel: number;
+      label?: string;
+      x: number;
+      y: number;
+      view_mode?: ViewMode | null;
+    },
   ): Promise<Placement> {
     return request<Placement>(`/layouts/${layoutId}/placements`, {
       method: 'POST',
@@ -226,7 +319,7 @@ export const api = {
   updatePlacement(
     layoutId: number,
     pid: number,
-    body: { x?: number; y?: number; label?: string },
+    body: { x?: number; y?: number; label?: string; view_mode?: ViewMode | null },
   ): Promise<Placement> {
     return request<Placement>(`/layouts/${layoutId}/placements/${pid}`, {
       method: 'PUT',

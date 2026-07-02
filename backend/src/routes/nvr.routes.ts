@@ -1,6 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { NvrService } from '../services/nvr.service.js';
-import { HanwhaService } from '../services/hanwha.service.js';
 import { Go2rtcService } from '../services/go2rtc.service.js';
 import {
   createNvrSchema,
@@ -13,6 +12,16 @@ import { authRequired, adminOnly } from '../middleware/auth.middleware.js';
 import { logger } from '../config/logger.js';
 
 const router = Router();
+
+/**
+ * Parse a route param as a positive integer. Returns null on NaN / non-integer,
+ * so an unparsed param can't slip past range checks (mirrors public.routes.ts).
+ */
+function parsePositiveInt(value: unknown): number | null {
+  if (typeof value !== 'string') return null;
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
 
 // All NVR routes require authentication
 router.use(authRequired);
@@ -34,7 +43,13 @@ router.get('/', (_req: Request, res: Response) => {
  * Get a single NVR device by ID.
  */
 router.get('/:id', (req: Request, res: Response) => {
-  const nvr = NvrService.findById(Number(req.params.id));
+  const id = parsePositiveInt(req.params.id);
+  if (id === null) {
+    res.status(400).json(errorResponse('Invalid id'));
+    return;
+  }
+
+  const nvr = NvrService.findById(id);
   if (!nvr) {
     res.status(404).json(errorResponse('NVR device not found'));
     return;
@@ -76,8 +91,14 @@ router.post('/', adminOnly, async (req: Request, res: Response, next: NextFuncti
  */
 router.put('/:id', adminOnly, async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const id = parsePositiveInt(req.params.id);
+    if (id === null) {
+      res.status(400).json(errorResponse('Invalid id'));
+      return;
+    }
+
     const input = updateNvrSchema.parse(req.body);
-    const nvr = NvrService.update(Number(req.params.id), input);
+    const nvr = NvrService.update(id, input);
 
     if (!nvr) {
       res.status(404).json(errorResponse('NVR device not found'));
@@ -103,7 +124,13 @@ router.put('/:id', adminOnly, async (req: Request, res: Response, next: NextFunc
  * Remove an NVR device. Admin only.
  */
 router.delete('/:id', adminOnly, (req: Request, res: Response) => {
-  const deleted = NvrService.delete(Number(req.params.id));
+  const id = parsePositiveInt(req.params.id);
+  if (id === null) {
+    res.status(400).json(errorResponse('Invalid id'));
+    return;
+  }
+
+  const deleted = NvrService.delete(id);
   if (!deleted) {
     res.status(404).json(errorResponse('NVR device not found'));
     return;
@@ -117,7 +144,12 @@ router.delete('/:id', adminOnly, (req: Request, res: Response) => {
  */
 router.get('/:id/cameras', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const nvrId = Number(req.params.id);
+    const nvrId = parsePositiveInt(req.params.id);
+    if (nvrId === null) {
+      res.status(400).json(errorResponse('Invalid id'));
+      return;
+    }
+
     const nvr = NvrService.findById(nvrId);
     if (!nvr) {
       res.status(404).json(errorResponse('NVR device not found'));
@@ -152,7 +184,12 @@ router.get('/:id/cameras', async (req: Request, res: Response, next: NextFunctio
  */
 router.get('/:id/streams', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const nvrId = Number(req.params.id);
+    const nvrId = parsePositiveInt(req.params.id);
+    if (nvrId === null) {
+      res.status(400).json(errorResponse('Invalid id'));
+      return;
+    }
+
     const nvr = NvrService.findById(nvrId);
     if (!nvr) {
       res.status(404).json(errorResponse('NVR device not found'));
@@ -168,7 +205,7 @@ router.get('/:id/streams', async (req: Request, res: Response, next: NextFunctio
     const streams = await Promise.all(
       enabled.map(async (cam) => {
         const streamName = Go2rtcService.streamName(nvrId, cam.channel);
-        const rtspUrl = HanwhaService.buildRtspUrl(nvr, cam.channel);
+        const rtspUrl = NvrService.resolveRtspUrl(nvr, cam.channel);
         await Go2rtcService.addStream(streamName, rtspUrl);
         return {
           channel: cam.channel,
@@ -196,7 +233,12 @@ router.post(
   adminOnly,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const nvrId = Number(req.params.id);
+      const nvrId = parsePositiveInt(req.params.id);
+      if (nvrId === null) {
+        res.status(400).json(errorResponse('Invalid id'));
+        return;
+      }
+
       const cameras = await NvrService.syncCameras(nvrId);
       res.json(successResponse(cameras));
     } catch (err) {
@@ -214,8 +256,17 @@ router.put(
   adminOnly,
   (req: Request, res: Response, next: NextFunction) => {
     try {
-      const nvrId = Number(req.params.nvrId);
-      const channel = Number(req.params.channel);
+      const nvrId = parsePositiveInt(req.params.nvrId);
+      const channel = parsePositiveInt(req.params.channel);
+      if (nvrId === null) {
+        res.status(400).json(errorResponse('Invalid nvrId'));
+        return;
+      }
+      if (channel === null) {
+        res.status(400).json(errorResponse('Invalid channel'));
+        return;
+      }
+
       const input = updateCameraSchema.parse(req.body);
       const camera = NvrService.updateCamera(nvrId, channel, input);
 
@@ -237,7 +288,12 @@ router.put(
  */
 router.post('/:id/status', adminOnly, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const nvrId = Number(req.params.id);
+    const nvrId = parsePositiveInt(req.params.id);
+    if (nvrId === null) {
+      res.status(400).json(errorResponse('Invalid id'));
+      return;
+    }
+
     const status = await NvrService.checkAndUpdateStatus(nvrId);
     res.json(successResponse({ id: nvrId, status }));
   } catch (err) {
@@ -254,7 +310,12 @@ router.post(
   adminOnly,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const nvrId = Number(req.params.id);
+      const nvrId = parsePositiveInt(req.params.id);
+      if (nvrId === null) {
+        res.status(400).json(errorResponse('Invalid id'));
+        return;
+      }
+
       const count = await NvrService.registerStreams(nvrId);
       res.json(successResponse({ registered: count }));
     } catch (err) {

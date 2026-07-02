@@ -38,6 +38,9 @@ function toPublicLayout(layout: LayoutRow): {
   name: string;
   has_image: boolean;
   image_mime: string | null;
+  width: number | null;
+  height: number | null;
+  area_id: number | null;
   created_at: string;
   updated_at: string;
 } {
@@ -46,6 +49,9 @@ function toPublicLayout(layout: LayoutRow): {
     name: layout.name,
     has_image: !!layout.image_path,
     image_mime: layout.image_mime,
+    width: layout.width,
+    height: layout.height,
+    area_id: layout.area_id,
     created_at: layout.created_at,
     updated_at: layout.updated_at,
   };
@@ -132,7 +138,7 @@ router.get('/:id/image', (req: Request, res: Response) => {
 router.post('/', authRequired, adminOnly, (req: Request, res: Response, next: NextFunction) => {
   try {
     const input = createLayoutSchema.parse(req.body);
-    const layout = LayoutService.create(input.name);
+    const layout = LayoutService.create(input);
     res.status(201).json(successResponse(toPublicLayout(layout)));
   } catch (err) {
     next(err);

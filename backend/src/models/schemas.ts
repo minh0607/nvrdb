@@ -40,6 +40,8 @@ export const createNvrSchema = z.object({
   // (often 2 or 3 — varies by camera config) when the main stream is H.265, which
   // browsers can't play over WebRTC/HLS. URL becomes …/media.smp/profile=<n>.
   stream_profile: z.number().int().min(1).max(20).nullable().optional(),
+  // Optional grouping area (reuses the same areas as layouts). null/undefined = ungrouped.
+  area_id: z.number().int().positive().nullable().optional(),
 });
 
 export const updateNvrSchema = createNvrSchema.partial();
@@ -82,14 +84,37 @@ export type UpdateCameraInput = z.infer<typeof updateCameraSchema>;
 
 export const createLayoutSchema = z.object({
   name: z.string().min(1).max(100),
+  // Optional grouping area. null/undefined = ungrouped.
+  area_id: z.number().int().positive().nullable().optional(),
 });
 
 export const updateLayoutSchema = z.object({
   name: z.string().min(1).max(100).optional(),
+  // Frame aspect (pixels). null clears it (fall back to image dims / 16:9);
+  // undefined leaves it unchanged.
+  width: z.number().int().min(1).max(20000).nullable().optional(),
+  height: z.number().int().min(1).max(20000).nullable().optional(),
+  // Grouping area. null clears (ungroup); undefined leaves unchanged.
+  area_id: z.number().int().positive().nullable().optional(),
 });
 
 export type CreateLayoutInput = z.infer<typeof createLayoutSchema>;
 export type UpdateLayoutInput = z.infer<typeof updateLayoutSchema>;
+
+// ── Area ────────────────────────────────────────────────────
+
+export const createAreaSchema = z.object({
+  name: z.string().min(1).max(100),
+  sort_order: z.number().int().optional(),
+});
+
+export const updateAreaSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  sort_order: z.number().int().optional(),
+});
+
+export type CreateAreaInput = z.infer<typeof createAreaSchema>;
+export type UpdateAreaInput = z.infer<typeof updateAreaSchema>;
 
 // ── Layout Placement ────────────────────────────────────────
 // x and y are percentages (0..100) of the floor-plan image dimensions.
@@ -100,16 +125,81 @@ export const createPlacementSchema = z.object({
   label: z.string().max(100).nullable().optional(),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
+  // Per-camera view mode. null = fall back to the global default_view_mode.
+  view_mode: z.enum(['go2rtc', 'vlc']).nullable().optional(),
 });
 
 export const updatePlacementSchema = z.object({
   x: z.number().min(0).max(100).optional(),
   y: z.number().min(0).max(100).optional(),
   label: z.string().max(100).nullable().optional(),
+  // null clears the per-camera override (use global default); undefined leaves it unchanged.
+  view_mode: z.enum(['go2rtc', 'vlc']).nullable().optional(),
 });
 
 export type CreatePlacementInput = z.infer<typeof createPlacementSchema>;
 export type UpdatePlacementInput = z.infer<typeof updatePlacementSchema>;
+
+// ── App Settings ────────────────────────────────────────────
+
+export const updateSettingsSchema = z
+  .object({
+    default_view_mode: z.enum(['go2rtc', 'vlc']).optional(),
+    // May be '' to clear. When non-empty it must be an http(s) URL with no
+    // characters that could break out of the generated PowerShell script.
+    // Used to generate the downloadable VLC setup script.
+    vlc_download_url: z
+      .string()
+      .max(500)
+      .refine(
+        (v) => v === '' || /^https?:\/\/[^\s"`;$()\\\r\n]+$/i.test(v),
+        'must be empty or an http(s) URL with no unsafe characters',
+      )
+      .optional(),
+  })
+  .refine(
+    (o) => o.default_view_mode !== undefined || o.vlc_download_url !== undefined,
+    'nothing to update',
+  );
+
+export type UpdateSettingsInput = z.infer<typeof updateSettingsSchema>;
+
+// ── Allowed IPs ─────────────────────────────────────────────
+
+/**
+ * Validate an IPv4 dotted-quad address or IPv4 CIDR (e.g. `192.168.1.50` or
+ * `192.168.1.0/24`). Each octet must be 0..255 and the optional prefix 0..32.
+ * Implemented by hand (no external deps).
+ */
+export function isValidIpOrCidr(value: string): boolean {
+  const [addr, prefix, ...rest] = value.split('/');
+  if (rest.length > 0) return false;
+
+  if (prefix !== undefined) {
+    if (!/^([0-9]|[12][0-9]|3[0-2])$/.test(prefix)) return false;
+    const p = Number(prefix);
+    if (p < 0 || p > 32) return false;
+  }
+
+  const octets = addr.split('.');
+  if (octets.length !== 4) return false;
+  return octets.every((o) => {
+    if (!/^\d{1,3}$/.test(o)) return false;
+    const n = Number(o);
+    return n >= 0 && n <= 255;
+  });
+}
+
+export const createAllowedIpSchema = z.object({
+  ip: z
+    .string()
+    .min(1)
+    .max(64)
+    .refine(isValidIpOrCidr, 'Must be an IPv4 address or CIDR'),
+  label: z.string().max(100).nullable().optional(),
+});
+
+export type CreateAllowedIpInput = z.infer<typeof createAllowedIpSchema>;
 
 // ── Auth ────────────────────────────────────────────────────
 
@@ -166,6 +256,7 @@ export interface NvrDeviceRow {
   stream_profile: number | null;
   status: 'online' | 'offline' | 'error';
   last_checked_at: string | null;
+  area_id: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -190,8 +281,18 @@ export interface LayoutRow {
   name: string;
   image_path: string | null;
   image_mime: string | null;
+  width: number | null;
+  height: number | null;
+  area_id: number | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface AreaRow {
+  id: number;
+  name: string;
+  sort_order: number;
+  created_at: string;
 }
 
 export interface PlacementRow {
@@ -202,7 +303,10 @@ export interface PlacementRow {
   label: string | null;
   x: number;
   y: number;
+  view_mode: 'go2rtc' | 'vlc' | null;
   created_at: string;
+  // Populated by getPlacements via a JOIN to the cameras table (not a stored column).
+  camera_name?: string | null;
 }
 
 export interface StreamSessionRow {
@@ -220,5 +324,12 @@ export interface UserRow {
   username: string;
   password_hash: string;
   role: 'admin' | 'viewer';
+  created_at: string;
+}
+
+export interface AllowedIpRow {
+  id: number;
+  ip: string;
+  label: string | null;
   created_at: string;
 }
