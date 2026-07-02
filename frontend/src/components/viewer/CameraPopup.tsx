@@ -57,7 +57,8 @@ export function CameraPopup({
     null,
   );
 
-  const title = placement.label?.trim() || `CH${placement.channel}`;
+  const title =
+    placement.label?.trim() || placement.camera_name?.trim() || `CH${placement.channel}`;
 
   const loadStream = useCallback(async () => {
     setStatus('loading');
@@ -67,7 +68,7 @@ export function CameraPopup({
       setStreamUrls(urls);
       setStatus('ready');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Không thể tải luồng camera');
+      setError(err instanceof Error ? err.message : 'Could not load camera stream');
       setStatus('error');
     }
   }, [placement.nvr_id, placement.channel]);
@@ -150,7 +151,7 @@ export function CameraPopup({
         <button
           onClick={onClose}
           className="p-1 -mr-1 text-[var(--color-text-dim)] hover:text-red-400 rounded transition-colors"
-          aria-label="Đóng"
+          aria-label="Close"
         >
           <X className="w-4 h-4" />
         </button>
@@ -161,20 +162,20 @@ export function CameraPopup({
         {status === 'loading' && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-[var(--color-text-dim)]">
             <Loader2 className="w-6 h-6 animate-spin text-[var(--color-accent)]" />
-            <span className="text-xs">Đang tải luồng…</span>
+            <span className="text-xs">Loading stream…</span>
           </div>
         )}
 
         {status === 'error' && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center px-4">
             <AlertTriangle className="w-7 h-7 text-red-400" />
-            <p className="text-xs text-red-300">{error ?? 'Không thể tải luồng camera'}</p>
+            <p className="text-xs text-red-300">{error ?? 'Could not load camera stream'}</p>
             <button
               onClick={loadStream}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-md transition-colors"
             >
               <RefreshCw className="w-3 h-3" />
-              Thử lại
+              Retry
             </button>
           </div>
         )}

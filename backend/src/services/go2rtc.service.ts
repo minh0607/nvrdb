@@ -31,10 +31,15 @@ interface Go2rtcStream {
 
 // All backend→go2rtc calls are bounded so a slow/hung go2rtc can't stall
 // request handlers indefinitely (addStream runs on every live-view request).
-const GO2RTC_TIMEOUT_MS = 5000;
+const GO2RTC_TIMEOUT_MS = 10000;
 
 export class Go2rtcService {
-  private static readonly baseUrl = env.GO2RTC_API_URL;
+  // Backend→go2rtc management calls use the INTERNAL url (loopback by default) so
+  // they never depend on the LAN-IP/firewall path — that path was intermittently
+  // unreachable, surfacing as "go2rtc addStream error".
+  private static readonly baseUrl = env.GO2RTC_INTERNAL_URL;
+  // Browser-facing stream URLs must use the LAN-reachable public url (SERVER_IP).
+  private static readonly publicBaseUrl = env.GO2RTC_API_URL;
 
   // Dedupe cache for addStream: maps stream name → {url, ts}. A repeat request
   // for the same name+url within DEDUPE_WINDOW_MS skips the redundant PUT. A
@@ -109,26 +114,43 @@ export class Go2rtcService {
   }
 
   /**
-   * Remove a stream from go2rtc.
+   * Remove a stream from go2rtc by its stream name.
+   *
+   * go2rtc's DELETE /api/streams identifies a stream by its producer `src` URL,
+   * NOT by name (a `?src=<name>` call returns 200 but deletes nothing, leaking
+   * streams over time). So we first look the stream up in listStreams() to find
+   * its producer URL(s) and DELETE each one (mirrors unregisterNvrStreams).
    */
   static async removeStream(name: string): Promise<boolean> {
     try {
-      // go2rtc's DELETE /api/streams identifies the stream via the `src` param.
-      // Using `name` returns 200 but deletes nothing, leaking streams over time.
-      const url = `${this.baseUrl}/api/streams?src=${encodeURIComponent(name)}`;
-      const response = await fetch(url, {
-        method: 'DELETE',
-        headers: this.authHeaders(),
-        signal: AbortSignal.timeout(GO2RTC_TIMEOUT_MS),
-      });
+      const streams = await this.listStreams();
+      const entry = streams[name];
 
-      if (!response.ok && response.status !== 404) {
-        logger.error({ name, status: response.status }, 'Failed to remove stream');
-        return false;
+      // Not present → already removed. Clear any dedupe cache entry and succeed.
+      if (!entry) {
+        this.streamRegisteredAt.delete(name);
+        return true;
       }
 
-      logger.info({ name }, 'Stream removed from go2rtc');
-      return true;
+      this.streamRegisteredAt.delete(name);
+
+      let ok = true;
+      for (const producer of entry.producers ?? []) {
+        const url = `${this.baseUrl}/api/streams?src=${encodeURIComponent(producer.url)}`;
+        const response = await fetch(url, {
+          method: 'DELETE',
+          headers: this.authHeaders(),
+          signal: AbortSignal.timeout(GO2RTC_TIMEOUT_MS),
+        });
+
+        if (!response.ok && response.status !== 404) {
+          logger.error({ name, status: response.status }, 'Failed to remove stream');
+          ok = false;
+        }
+      }
+
+      if (ok) logger.info({ name }, 'Stream removed from go2rtc');
+      return ok;
     } catch (err) {
       logger.error({ name, error: err }, 'go2rtc removeStream error');
       return false;
@@ -164,7 +186,7 @@ export class Go2rtcService {
    * The frontend uses this to establish a peer connection.
    */
   static getWebRtcUrl(streamName: string): string {
-    return `${this.baseUrl}/api/webrtc?src=${encodeURIComponent(streamName)}`;
+    return `${this.publicBaseUrl}/api/webrtc?src=${encodeURIComponent(streamName)}`;
   }
 
   /**
@@ -172,7 +194,7 @@ export class Go2rtcService {
    * Used as fallback when WebRTC is unavailable.
    */
   static getHlsUrl(streamName: string): string {
-    return `${this.baseUrl}/api/stream.m3u8?src=${encodeURIComponent(streamName)}`;
+    return `${this.publicBaseUrl}/api/stream.m3u8?src=${encodeURIComponent(streamName)}`;
   }
 
   /**
@@ -180,7 +202,7 @@ export class Go2rtcService {
    * Used as an alternative to HLS for lower latency in supported browsers.
    */
   static getMseUrl(streamName: string): string {
-    return `${this.baseUrl}/api/ws?src=${encodeURIComponent(streamName)}`;
+    return `${this.publicBaseUrl}/api/ws?src=${encodeURIComponent(streamName)}`;
   }
 
   /**

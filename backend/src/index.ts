@@ -11,12 +11,16 @@ import { initializeDatabase } from './models/database.js';
 import { AuthService } from './services/auth.service.js';
 import { NvrService } from './services/nvr.service.js';
 import { errorHandler } from './middleware/error.middleware.js';
+import { ipAllowlist } from './middleware/ip-allowlist.middleware.js';
 
 import authRoutes from './routes/auth.routes.js';
 import nvrRoutes from './routes/nvr.routes.js';
 import streamRoutes from './routes/stream.routes.js';
 import layoutRoutes from './routes/layout.routes.js';
+import areaRoutes from './routes/area.routes.js';
 import publicRoutes from './routes/public.routes.js';
+import settingsRoutes from './routes/settings.routes.js';
+import allowedIpRoutes from './routes/allowed-ip.routes.js';
 
 // App version (read from package.json) so the running server can self-report it.
 function readAppVersion(): string {
@@ -42,6 +46,13 @@ async function bootstrap(): Promise<void> {
   // a default CSP silently breaks that. Acceptable for the airgapped LAN target
   // where external injection/exfil is not a threat; all other Helmet headers stay.
   app.use(helmet({ contentSecurityPolicy: false }));
+
+  // ── IP Allowlist (global gate) ──────────────────────────
+  // Applied FIRST — before CORS, body parsing, and any route mount or the static
+  // SPA handler — so a blocked IP gets 403 for both /api and the frontend without
+  // any prior processing. Loopback is always allowed, so the server-local admin
+  // is never locked out. Empty allowlist = open by default.
+  app.use(ipAllowlist);
 
   // CORS
   app.use(
@@ -90,7 +101,10 @@ async function bootstrap(): Promise<void> {
   app.use('/api/nvr', nvrRoutes);
   app.use('/api/streams', streamRoutes);
   app.use('/api/layouts', layoutRoutes);
+  app.use('/api/areas', areaRoutes);
   app.use('/api/public', publicRoutes);
+  app.use('/api/settings', settingsRoutes);
+  app.use('/api/allowed-ips', allowedIpRoutes);
 
   // Health check (no auth required)
   app.get('/api/health', (_req, res) => {

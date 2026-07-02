@@ -14,6 +14,9 @@ const envSchema = z.object({
   GO2RTC_HOST: z.string().default('localhost'),
   GO2RTC_PORT: z.coerce.number().default(1984),
   GO2RTC_API_URL: z.string().url().default('http://localhost:1984'),
+  // Backend→go2rtc management URL. Defaults to loopback (same host as the backend)
+  // so it never rides the flaky LAN-IP/firewall path. Browser URLs use GO2RTC_API_URL.
+  GO2RTC_INTERNAL_URL: z.string().url().default('http://127.0.0.1:1984'),
   // Optional: set when go2rtc Basic auth is enabled so backend calls authenticate.
   GO2RTC_USERNAME: z.string().default(''),
   GO2RTC_PASSWORD: z.string().default(''),

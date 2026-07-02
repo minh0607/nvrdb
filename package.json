@@ -1,7 +1,7 @@
 {
   "name": "nvr-dashboard",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.5.0",
   "description": "NVR Management Dashboard for Hanwha XRN-1620SB1 devices",
   "scripts": {
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",

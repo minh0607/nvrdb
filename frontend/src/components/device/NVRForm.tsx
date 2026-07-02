@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import type { NvrDevice, CreateNvrInput } from '../../types/api';
+import React, { useEffect, useState } from 'react';
+import { api } from '../../lib/api';
+import type { Area, NvrDevice, CreateNvrInput } from '../../types/api';
 import { X, Save, Loader2 } from 'lucide-react';
 
 interface NVRFormProps {
@@ -19,9 +20,27 @@ export function NVRForm({ nvr, onSubmit, onClose }: NVRFormProps) {
     model: nvr?.model ?? 'XRN-1620SB1',
     max_channels: nvr?.max_channels ?? 16,
     stream_profile: nvr?.stream_profile ?? undefined,
+    area_id: nvr?.area_id ?? null,
   });
+  const [areas, setAreas] = useState<Area[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Load the zones (areas) so the NVR can be assigned to one.
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const list = await api.listAreas();
+        if (active) setAreas(list);
+      } catch {
+        if (active) setAreas([]);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleChange = (field: keyof CreateNvrInput, value: string | number) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -191,6 +210,33 @@ export function NVRForm({ nvr, onSubmit, onClose }: NVRFormProps) {
               <p className="mt-1 text-[10px] text-[var(--color-text-dim)]">
                 If cameras are H.265 (won't play in browser), set the H.264 sub-stream
                 profile number (RTSP …/media.smp/profile=N). Try 2 or 3.
+              </p>
+            </div>
+
+            {/* Area (zone) */}
+            <div className="col-span-2">
+              <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
+                Zone (area)
+              </label>
+              <select
+                value={formData.area_id ?? ''}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    area_id: e.target.value === '' ? null : parseInt(e.target.value, 10),
+                  }))
+                }
+                className="w-full px-3 py-2 text-sm bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded-lg focus:outline-none focus:border-[var(--color-accent)] focus:ring-1 focus:ring-[var(--color-accent)]/30 transition-colors cursor-pointer"
+              >
+                <option value="">— None —</option>
+                {areas.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[10px] text-[var(--color-text-dim)]">
+                Groups this NVR in the Live View sidebar. Create zones in the Layouts admin page.
               </p>
             </div>
 

@@ -8,6 +8,8 @@ import type {
   PlacementRow,
   CreatePlacementInput,
   UpdatePlacementInput,
+  CreateLayoutInput,
+  UpdateLayoutInput,
 } from '../models/schemas.js';
 
 /**
@@ -56,21 +58,30 @@ export class LayoutService {
     return db.prepare('SELECT * FROM layouts WHERE id = ?').get(id) as LayoutRow | undefined;
   }
 
-  static create(name: string): LayoutRow {
-    const result = db.prepare('INSERT INTO layouts (name) VALUES (?)').run(name);
+  static create(input: CreateLayoutInput): LayoutRow {
+    const result = db
+      .prepare('INSERT INTO layouts (name, area_id) VALUES (?, ?)')
+      .run(input.name, input.area_id ?? null);
     const layout = this.findById(result.lastInsertRowid as number)!;
     logger.info({ layoutId: layout.id, name: layout.name }, 'Layout created');
     return layout;
   }
 
-  static update(id: number, input: { name?: string }): LayoutRow | null {
+  static update(id: number, input: UpdateLayoutInput): LayoutRow | null {
     const existing = this.findById(id);
     if (!existing) return null;
 
     const name = input.name ?? existing.name;
+    // undefined = leave unchanged; null = clear the stored frame aspect.
+    const width = input.width !== undefined ? input.width : existing.width;
+    const height = input.height !== undefined ? input.height : existing.height;
+    // undefined = leave unchanged; null = ungroup (clear the area).
+    const areaId = input.area_id !== undefined ? input.area_id : existing.area_id;
+
     db.prepare(`
-      UPDATE layouts SET name = ?, updated_at = datetime('now') WHERE id = ?
-    `).run(name, id);
+      UPDATE layouts SET name = ?, width = ?, height = ?, area_id = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(name, width, height, areaId, id);
 
     logger.info({ layoutId: id }, 'Layout updated');
     return this.findById(id)!;
@@ -112,23 +123,42 @@ export class LayoutService {
 
   static getPlacements(layoutId: number): PlacementRow[] {
     return db
-      .prepare('SELECT * FROM layout_placements WHERE layout_id = ? ORDER BY id')
+      .prepare(
+        `SELECT p.*, c.name AS camera_name
+         FROM layout_placements p
+         LEFT JOIN cameras c ON c.nvr_id = p.nvr_id AND c.channel = p.channel
+         WHERE p.layout_id = ?
+         ORDER BY p.id`,
+      )
       .all(layoutId) as PlacementRow[];
   }
 
   static findPlacementById(pid: number): PlacementRow | undefined {
-    return db.prepare('SELECT * FROM layout_placements WHERE id = ?').get(pid) as
-      | PlacementRow
-      | undefined;
+    return db
+      .prepare(
+        `SELECT p.*, c.name AS camera_name
+         FROM layout_placements p
+         LEFT JOIN cameras c ON c.nvr_id = p.nvr_id AND c.channel = p.channel
+         WHERE p.id = ?`,
+      )
+      .get(pid) as PlacementRow | undefined;
   }
 
   static addPlacement(layoutId: number, input: CreatePlacementInput): PlacementRow {
     const result = db
       .prepare(`
-        INSERT INTO layout_placements (layout_id, nvr_id, channel, label, x, y)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO layout_placements (layout_id, nvr_id, channel, label, x, y, view_mode)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `)
-      .run(layoutId, input.nvr_id, input.channel, input.label ?? null, input.x, input.y);
+      .run(
+        layoutId,
+        input.nvr_id,
+        input.channel,
+        input.label ?? null,
+        input.x,
+        input.y,
+        input.view_mode ?? null,
+      );
 
     const placement = this.findPlacementById(result.lastInsertRowid as number)!;
     logger.info({ layoutId, placementId: placement.id }, 'Placement added');
@@ -142,10 +172,12 @@ export class LayoutService {
     const x = input.x ?? existing.x;
     const y = input.y ?? existing.y;
     const label = input.label !== undefined ? input.label : existing.label;
+    // undefined = leave unchanged; null = clear the per-camera override.
+    const viewMode = input.view_mode !== undefined ? input.view_mode : existing.view_mode;
 
     db.prepare(`
-      UPDATE layout_placements SET x = ?, y = ?, label = ? WHERE id = ?
-    `).run(x, y, label, pid);
+      UPDATE layout_placements SET x = ?, y = ?, label = ?, view_mode = ? WHERE id = ?
+    `).run(x, y, label, viewMode, pid);
 
     return this.findPlacementById(pid)!;
   }

@@ -9,11 +9,14 @@ import type { NvrDeviceRow, CameraInput } from '../models/schemas.js';
  *   - GET  /stw-cgi/media.cgi?msubmenu=channellist&action=view
  *   - GET  /stw-cgi/media.cgi?msubmenu=videoprofile&action=view&Channel=<n>
  *
+ * RTSP LiveChannel/VideoClip indices are 0-based: UI channel N maps to
+ * LiveChannel/(N-1) (UI channel 1 → LiveChannel/00, channel 16 → LiveChannel/15).
+ *
  * RTSP URL pattern:
- *   rtsp://user:pass@ip:554/LiveChannel/<channel>/media.smp
+ *   rtsp://user:pass@ip:554/LiveChannel/<channel-1>/media.smp
  *
  * Playback RTSP pattern:
- *   rtsp://user:pass@ip:554/VideoClip/<channel>/<YYYYMMDD>/<HHMMSS>/<duration>
+ *   rtsp://user:pass@ip:554/VideoClip/<channel-1>/<YYYYMMDD>/<HHMMSS>/<duration>
  */
 
 // In-memory cache for camera lists per NVR, keyed by nvr id
@@ -199,6 +202,7 @@ export class HanwhaService {
 
   /**
    * Build the live RTSP URL for a given NVR channel.
+   * The LiveChannel index is 0-based, so UI channel N → LiveChannel/(N-1).
    */
   static buildRtspUrl(nvr: NvrDeviceRow, channel: number): string {
     const encodedUser = encodeURIComponent(nvr.username);
@@ -206,12 +210,13 @@ export class HanwhaService {
     // Append the Hanwha profile selector for the sub-stream when configured.
     // Default (unset) uses the channel's main profile (current behaviour).
     const profile = nvr.stream_profile ? `/profile=${nvr.stream_profile}` : '';
-    return `rtsp://${encodedUser}:${encodedPass}@${nvr.ip}:${nvr.rtsp_port}/LiveChannel/${String(channel).padStart(2, '0')}/media.smp${profile}`;
+    return `rtsp://${encodedUser}:${encodedPass}@${nvr.ip}:${nvr.rtsp_port}/LiveChannel/${String(channel - 1).padStart(2, '0')}/media.smp${profile}`;
   }
 
   /**
    * Build the playback RTSP URL for a recorded clip.
    * date: YYYY-MM-DD, time: HH:MM, duration in seconds.
+   * The VideoClip index is 0-based, so UI channel N → VideoClip/(N-1).
    */
   static buildPlaybackRtspUrl(
     nvr: NvrDeviceRow,
@@ -224,7 +229,7 @@ export class HanwhaService {
     const encodedPass = encodeURIComponent(nvr.password);
     const dateClean = date.replace(/-/g, '');
     const timeClean = time.replace(/:/g, '') + '00'; // append seconds
-    return `rtsp://${encodedUser}:${encodedPass}@${nvr.ip}:${nvr.rtsp_port}/VideoClip/${String(channel).padStart(2, '0')}/${dateClean}/${timeClean}/${durationSec}`;
+    return `rtsp://${encodedUser}:${encodedPass}@${nvr.ip}:${nvr.rtsp_port}/VideoClip/${String(channel - 1).padStart(2, '0')}/${dateClean}/${timeClean}/${durationSec}`;
   }
 
   /**

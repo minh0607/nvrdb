@@ -28,8 +28,8 @@ export class NvrService {
 
   static create(input: CreateNvrInput): NvrDeviceRow {
     const stmt = db.prepare(`
-      INSERT INTO nvr_devices (name, ip, http_port, rtsp_port, username, password, model, max_channels, stream_profile)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO nvr_devices (name, ip, http_port, rtsp_port, username, password, model, max_channels, stream_profile, area_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
@@ -42,6 +42,7 @@ export class NvrService {
       input.model,
       input.max_channels,
       input.stream_profile ?? null,
+      input.area_id ?? null,
     );
 
     const nvr = this.findById(result.lastInsertRowid as number)!;
@@ -58,7 +59,7 @@ export class NvrService {
     db.prepare(`
       UPDATE nvr_devices
       SET name = ?, ip = ?, http_port = ?, rtsp_port = ?, username = ?,
-          password = ?, model = ?, max_channels = ?, stream_profile = ?, updated_at = ?
+          password = ?, model = ?, max_channels = ?, stream_profile = ?, area_id = ?, updated_at = ?
       WHERE id = ?
     `).run(
       merged.name,
@@ -70,6 +71,7 @@ export class NvrService {
       merged.model,
       merged.max_channels,
       merged.stream_profile ?? null,
+      merged.area_id ?? null,
       merged.updated_at,
       id,
     );
@@ -247,7 +249,7 @@ export class NvrService {
 
     const rtspUrls = enabledCameras.map((cam) => ({
       channel: cam.channel,
-      url: HanwhaService.buildRtspUrl(nvr, cam.channel),
+      url: this.resolveRtspUrl(nvr, cam.channel),
     }));
 
     return Go2rtcService.registerNvrStreams(nvrId, rtspUrls);
