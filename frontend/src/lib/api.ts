@@ -165,6 +165,19 @@ export const api = {
     return request<StreamUrls>(`/public/streams/${nvrId}/${channel}`, { auth: false });
   },
 
+  /**
+   * Force go2rtc to drop the dead/zombie stream and re-pull a fresh one, then
+   * return the new stream URLs. Used by a live tile on REBUILD (not the initial
+   * connect) so a stuck stream can actually recover instead of re-fetching the
+   * same dead HLS URL.
+   */
+  reconnectPublicStream(nvrId: number, channel: number): Promise<StreamUrls> {
+    return request<StreamUrls>(`/public/streams/${nvrId}/${channel}/reconnect`, {
+      method: 'POST',
+      auth: false,
+    });
+  },
+
   /** Resolve the raw RTSP URL so the OS can hand it off to VLC (no auth). */
   getVlcUrl(nvrId: number, channel: number): Promise<{ rtsp: string }> {
     return request<{ rtsp: string }>(`/public/vlc/${nvrId}/${channel}`, { auth: false });
