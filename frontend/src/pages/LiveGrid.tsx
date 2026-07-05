@@ -1,22 +1,53 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
-import { HlsTile } from '../components/grid/HlsTile';
+import { ScanControls } from '../components/grid/ScanControls';
+import { FocusedTile } from '../components/grid/FocusedTile';
+import { LivePageGrid } from '../components/grid/LivePageGrid';
 import { ZoneSidebar, groupNvrsByArea } from '../components/grid/ZoneSidebar';
 import type { Area, PublicCamera, PublicNvr } from '../types/api';
 import { Settings, Maximize2, Loader2, AlertTriangle, Video, MousePointerClick } from 'lucide-react';
 
-// Fixed 3x3 layout: at most 9 live streams mounted at once.
-const PAGE_SIZE = 9;
-// Delay after unmounting the old page's tiles before mounting the new page's.
-// This lets go2rtc drop the old consumers and stop those RTSP pulls, guaranteeing
-// the NVR never sees >9 simultaneous RTSP sessions (it crashes above ~10).
+// Grid layout: 2x2 (4 tiles) is the safe fallback when the NVR can't service a
+// full 3x3 (9 tiles). Fewer tiles == fewer concurrent RTSP setups.
+type GridLayout = '2x2' | '3x3';
+const LAYOUT_STORAGE_KEY = 'liveGrid.layout';
+
+// Scan (auto-sequence / patrol) interval, persisted across sessions.
+const SCAN_INTERVAL_STORAGE_KEY = 'nvr_scan_interval';
+const DEFAULT_SCAN_INTERVAL_SEC = 10;
+const VALID_SCAN_INTERVALS = [5, 10, 15, 30];
+
+function pageSizeFor(layout: GridLayout): number {
+  return layout === '2x2' ? 4 : 9;
+}
+
+function loadLayout(): GridLayout {
+  try {
+    return localStorage.getItem(LAYOUT_STORAGE_KEY) === '2x2' ? '2x2' : '3x3';
+  } catch {
+    return '3x3';
+  }
+}
+
+function loadScanInterval(): number {
+  try {
+    const stored = Number(localStorage.getItem(SCAN_INTERVAL_STORAGE_KEY));
+    return VALID_SCAN_INTERVALS.includes(stored) ? stored : DEFAULT_SCAN_INTERVAL_SEC;
+  } catch {
+    return DEFAULT_SCAN_INTERVAL_SEC;
+  }
+}
+
+// Delay after unmounting the old tiles before mounting the new ones. This lets
+// go2rtc drop the old consumers and stop those RTSP pulls, guaranteeing the NVR
+// never briefly sees more than one page's worth of simultaneous RTSP sessions.
 const SWITCH_DELAY_MS = 1800;
 
 /**
  * Public "Live Grid" main dashboard (no auth). A left sidebar groups NVRs by
- * zone (area); picking one loads its channels into a 3x3 grid of self-recovering
- * HLS tiles that stretch to fill the viewport.
+ * zone (area); picking one loads its channels into a 2x2 or 3x3 grid of
+ * self-recovering HLS tiles that stretch to fill the viewport.
  */
 export function LiveGrid() {
   const [nvrs, setNvrs] = useState<PublicNvr[]>([]);
@@ -24,11 +55,18 @@ export function LiveGrid() {
   const [selectedNvrId, setSelectedNvrId] = useState<number | null>(null);
   const [cameras, setCameras] = useState<PublicCamera[]>([]);
   const [page, setPage] = useState(1);
+  const [layout, setLayout] = useState<GridLayout>(loadLayout);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
   // While `switching` is true NO tiles are mounted, so old RTSP pulls fully drain
   // before the new page's tiles mount.
   const [switching, setSwitching] = useState(false);
+  // Scan mode auto-cycles pages so only one page (<= pageSize) is ever live.
+  const [scanning, setScanning] = useState(false);
+  const [scanIntervalSec, setScanIntervalSec] = useState<number>(loadScanInterval);
+  // Single-camera focus: when set, the grid is unmounted and only this one
+  // channel streams (keeps the internet RTSP pull minimal).
+  const [focusedChannel, setFocusedChannel] = useState<number | null>(null);
   const switchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -37,9 +75,11 @@ export function LiveGrid() {
     [nvrs, selectedNvrId],
   );
 
+  const pageSize = pageSizeFor(layout);
+
   const pageCount = useMemo(
-    () => Math.max(1, Math.ceil((selectedNvr?.max_channels ?? 0) / PAGE_SIZE)),
-    [selectedNvr],
+    () => Math.max(1, Math.ceil((selectedNvr?.max_channels ?? 0) / pageSize)),
+    [selectedNvr, pageSize],
   );
 
   const cameraNameFor = useCallback(
@@ -113,6 +153,7 @@ export function LiveGrid() {
   const handleSelectNvr = useCallback(
     (id: number) => {
       if (id === selectedNvrId) return;
+      setFocusedChannel(null);
       switchWith(() => {
         setSelectedNvrId(id);
         setPage(1);
@@ -129,9 +170,58 @@ export function LiveGrid() {
     [page, switchWith],
   );
 
+  const handleSelectLayout = useCallback(
+    (next: GridLayout) => {
+      if (next === layout) return;
+      try {
+        localStorage.setItem(LAYOUT_STORAGE_KEY, next);
+      } catch {
+        // Ignore storage failures (private mode / disabled storage).
+      }
+      setFocusedChannel(null);
+      // Drain current tiles first so we never briefly exceed one page's tiles.
+      switchWith(() => {
+        setLayout(next);
+        setPage(1);
+      });
+    },
+    [layout, switchWith],
+  );
+
   const handleFullscreen = useCallback(() => {
     rootRef.current?.requestFullscreen?.().catch(() => {});
   }, []);
+
+  const handleToggleScan = useCallback(() => setScanning((prev) => !prev), []);
+
+  const handleScanInterval = useCallback((sec: number) => {
+    setScanIntervalSec(sec);
+    try {
+      localStorage.setItem(SCAN_INTERVAL_STORAGE_KEY, String(sec));
+    } catch {
+      // Ignore storage failures (private mode / disabled storage).
+    }
+  }, []);
+
+  const handleFocusChannel = useCallback((channel: number) => {
+    setFocusedChannel(channel);
+  }, []);
+
+  const handleCloseFocus = useCallback(() => setFocusedChannel(null), []);
+
+  // Scan auto-advance: while scanning (and not focused, and there is more than
+  // one page), cycle to the next page every `scanIntervalSec` via switchWith so
+  // streams drain-and-remount cleanly and never exceed one page of concurrency.
+  // The timer resets on any dependency change — scan toggle, focus, interval,
+  // page (manual or auto), NVR, or layout — so a manual page click keeps
+  // scanning from there.
+  useEffect(() => {
+    if (!scanning || focusedChannel !== null || pageCount <= 1) return;
+    const timer = setInterval(() => {
+      switchWith(() => setPage((prev) => (prev < pageCount ? prev + 1 : 1)));
+    }, scanIntervalSec * 1000);
+    return () => clearInterval(timer);
+  }, [scanning, focusedChannel, pageCount, scanIntervalSec, page, selectedNvrId, layout, switchWith]);
 
   const maxChannels = selectedNvr?.max_channels ?? 0;
 
@@ -170,14 +260,48 @@ export function LiveGrid() {
             </div>
           )}
 
-          <button
-            onClick={handleFullscreen}
-            className="ml-auto inline-flex items-center justify-center w-8 h-8 rounded-full text-[var(--color-text-dim)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-raised)] transition-colors"
-            aria-label="Fullscreen"
-            title="Fullscreen"
-          >
-            <Maximize2 className="w-4 h-4" />
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            {/* Scan (auto-sequence) controls: cycle pages so only one page is
+                ever live — ideal for the bandwidth-limited internet link. */}
+            {selectedNvr && (
+              <ScanControls
+                scanning={scanning}
+                onToggleScan={handleToggleScan}
+                intervalSec={scanIntervalSec}
+                onIntervalChange={handleScanInterval}
+                page={page}
+                pageCount={pageCount}
+              />
+            )}
+
+            {/* Layout toggle: 2x2 is the safe fallback when the NVR can't
+                handle a full 3x3 (9 concurrent RTSP pulls). */}
+            <div
+              role="group"
+              aria-label="Grid layout"
+              className="inline-flex items-center gap-1 p-0.5 rounded-full bg-[var(--color-surface-raised)]"
+            >
+              {(['2x2', '3x3'] as const).map((opt) => (
+                <button
+                  key={opt}
+                  onClick={() => handleSelectLayout(opt)}
+                  aria-pressed={layout === opt}
+                  className={segmentClass(layout === opt)}
+                >
+                  {opt === '2x2' ? '2×2' : '3×3'}
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={handleFullscreen}
+              className="inline-flex items-center justify-center w-8 h-8 rounded-full text-[var(--color-text-dim)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-raised)] transition-colors"
+              aria-label="Fullscreen"
+              title="Fullscreen"
+            >
+              <Maximize2 className="w-4 h-4" />
+            </button>
+          </div>
         </header>
 
         {/* Stage / states */}
@@ -222,43 +346,28 @@ export function LiveGrid() {
             </div>
           )}
 
-          {status === 'ready' && selectedNvr && (
-            <div className="relative h-full w-full">
-              <div className="grid grid-cols-3 grid-rows-3 gap-2 h-full w-full">
-                {Array.from({ length: PAGE_SIZE }, (_, slot) => {
-                  const channel = (page - 1) * PAGE_SIZE + slot + 1;
-                  const hasCamera = channel <= maxChannels;
-                  return (
-                    <div key={channel} className="relative min-h-0 min-w-0">
-                      {hasCamera && !switching ? (
-                        <HlsTile
-                          nvrId={selectedNvr.id}
-                          channel={channel}
-                          name={cameraNameFor(channel) || `CH${channel}`}
-                        />
-                      ) : (
-                        <div className="video-cell flex items-center justify-center h-full bg-black/40">
-                          {hasCamera ? null : (
-                            <div className="text-center text-[var(--color-text-dim)]">
-                              <Video className="w-6 h-6 mx-auto mb-1 opacity-30" />
-                              <p className="text-[11px]">No camera</p>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+          {/* Single-camera focus: only this one stream is live; the grid tiles
+              are unmounted so the internet RTSP pull stays minimal. */}
+          {status === 'ready' && selectedNvr && focusedChannel !== null && (
+            <FocusedTile
+              nvrId={selectedNvr.id}
+              channel={focusedChannel}
+              name={cameraNameFor(focusedChannel) || `CH${focusedChannel}`}
+              onClose={handleCloseFocus}
+            />
+          )}
 
-              {/* Switching overlay: shown while old tiles drain before new ones mount. */}
-              {switching && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/70 text-[var(--color-text-muted)] rounded-lg">
-                  <Loader2 className="w-7 h-7 animate-spin text-[var(--color-accent)]" />
-                  <span className="text-sm">Switching…</span>
-                </div>
-              )}
-            </div>
+          {status === 'ready' && selectedNvr && focusedChannel === null && (
+            <LivePageGrid
+              nvrId={selectedNvr.id}
+              is2x2={layout === '2x2'}
+              page={page}
+              pageSize={pageSize}
+              maxChannels={maxChannels}
+              switching={switching}
+              cameraNameFor={cameraNameFor}
+              onFocusChannel={handleFocusChannel}
+            />
           )}
         </main>
       </div>
@@ -271,5 +380,13 @@ function pillClass(active: boolean): string {
     active
       ? 'bg-[var(--color-accent)] text-white shadow-sm shadow-[var(--color-accent)]/30'
       : 'text-[var(--color-text-muted)] bg-[var(--color-surface-raised)] hover:text-[var(--color-text)]'
+  }`;
+}
+
+function segmentClass(active: boolean): string {
+  return `px-2.5 py-1 text-xs font-medium rounded-full whitespace-nowrap transition-colors ${
+    active
+      ? 'bg-[var(--color-accent)] text-white shadow-sm shadow-[var(--color-accent)]/30'
+      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
   }`;
 }

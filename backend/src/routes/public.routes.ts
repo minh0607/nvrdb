@@ -77,6 +77,70 @@ router.get('/streams/:nvrId/:channel', async (req: Request, res: Response, next:
 });
 
 /**
+ * POST /api/public/streams/:nvrId/:channel/reconnect
+ * Public (no auth). Force go2rtc to DROP the existing stream and re-pull a fresh
+ * one for a camera.
+ *
+ * Motivation: when a tile's RTSP DESCRIBE fails (NVR briefly overloaded), go2rtc
+ * can leave the producer in a dead state while the NVR holds a half-open (zombie)
+ * session occupying one of its ~10 concurrent-RTSP slots. A plain re-fetch of the
+ * HLS URL hits addStream's 60s dedupe and never re-registers, so the stream stays
+ * dead. removeStream() deletes the go2rtc producer by src URL (freeing the zombie
+ * NVR session) AND clears the dedupe cache, so the following addStream actually
+ * PUTs a fresh registration.
+ *
+ * SECURITY: same public posture as GET /streams — returns only go2rtc stream URLs,
+ * never the rtsp:// source (which embeds NVR credentials).
+ */
+router.post(
+  '/streams/:nvrId/:channel/reconnect',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const nvrId = parsePositiveInt(req.params.nvrId);
+      const channel = parsePositiveInt(req.params.channel);
+      if (nvrId === null || channel === null) {
+        res.status(400).json(errorResponse('Invalid nvrId or channel'));
+        return;
+      }
+
+      const nvr = NvrService.findById(nvrId);
+      if (!nvr) {
+        res.status(404).json(errorResponse('NVR device not found'));
+        return;
+      }
+
+      if (channel > nvr.max_channels) {
+        res.status(400).json(errorResponse(`Channel must be between 1 and ${nvr.max_channels}`));
+        return;
+      }
+
+      const camera = NvrService.getCamera(nvrId, channel);
+      if (!camera || !camera.enabled) {
+        res.status(404).json(errorResponse('Camera not found or not available'));
+        return;
+      }
+
+      const streamName = Go2rtcService.streamName(nvrId, channel);
+      // Drop the dead producer + clear the dedupe cache (frees the zombie NVR
+      // session), then re-register a fresh pull so go2rtc re-DESCRIBEs the RTSP.
+      await Go2rtcService.removeStream(streamName);
+      await Go2rtcService.addStream(streamName, NvrService.resolveRtspUrl(nvr, channel));
+
+      res.json(
+        successResponse({
+          streamName,
+          webrtc: Go2rtcService.getWebRtcUrl(streamName),
+          hls: Go2rtcService.getHlsUrl(streamName),
+          mse: Go2rtcService.getMseUrl(streamName),
+        }),
+      );
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
  * GET /api/public/vlc/:nvrId/:channel
  * Public (no auth). Returns the raw rtsp:// URL for opening the camera in an
  * external VLC player ("VLC mode").

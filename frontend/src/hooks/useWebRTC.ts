@@ -59,6 +59,12 @@ export function useWebRTC({ webrtcUrl, hlsFallbackUrl }: UseWebRTCOptions): UseW
   const [status, setStatus] = useState<UseWebRTCResult['status']>('idle');
   const [error, setError] = useState<string | null>(null);
   const retryCountRef = useRef(0);
+  // Bumped on every cleanup (url change / unmount / retry). A connect attempt
+  // captures the value after its own cleanup() and re-checks it after awaiting
+  // a connect slot: if it changed, the attempt is stale and must NOT create a
+  // peer connection — doing so leaked an unclosable RTCPeerConnection (and the
+  // RTSP session behind it) whenever the component unmounted while queued.
+  const generationRef = useRef(0);
 
   // Release this hook's connect-gate slot (idempotent) and clear its safety timer.
   const freeSlot = useCallback(() => {
@@ -73,6 +79,7 @@ export function useWebRTC({ webrtcUrl, hlsFallbackUrl }: UseWebRTCOptions): UseW
   }, []);
 
   const cleanup = useCallback(() => {
+    generationRef.current++; // invalidate any connect attempt queued for a slot
     freeSlot();
     // Abort any in-flight SDP signaling fetch so its rejection doesn't fire the
     // fallback/error path after we've intentionally torn the connection down.
@@ -138,11 +145,18 @@ export function useWebRTC({ webrtcUrl, hlsFallbackUrl }: UseWebRTCOptions): UseW
     if (!webrtcUrl) return;
 
     cleanup();
+    const generation = generationRef.current;
     setStatus('connecting');
     setError(null);
 
     // Wait for a connect slot so we don't stampede the browser/go2rtc.
     await acquireConnectSlot();
+    if (generation !== generationRef.current) {
+      // Torn down (unmount / url change) while queued — hand the slot back and
+      // bail before creating a peer connection nothing will ever close.
+      releaseConnectSlot();
+      return;
+    }
     slotHeldRef.current = true;
     slotTimerRef.current = setTimeout(freeSlot, CONNECT_SLOT_TIMEOUT_MS);
 
@@ -159,6 +173,10 @@ export function useWebRTC({ webrtcUrl, hlsFallbackUrl }: UseWebRTCOptions): UseW
 
       // Receive remote video track
       pc.ontrack = (event) => {
+        // Gate against late events from a torn-down attempt's pc: without this
+        // a stale ontrack could clobber the replacement's video and free ITS
+        // connect slot (same gap the generation guard closes in catch).
+        if (generation !== generationRef.current) return;
         if (videoRef.current && event.streams[0]) {
           videoRef.current.srcObject = event.streams[0];
           setStatus('connected');
@@ -168,6 +186,7 @@ export function useWebRTC({ webrtcUrl, hlsFallbackUrl }: UseWebRTCOptions): UseW
       };
 
       pc.oniceconnectionstatechange = () => {
+        if (generation !== generationRef.current) return; // stale pc event
         // 'disconnected' is transient and frequently self-recovers (esp. on a
         // busy LAN); only a hard 'failed' is terminal.
         if (pc.iceConnectionState === 'failed') {
@@ -207,7 +226,11 @@ export function useWebRTC({ webrtcUrl, hlsFallbackUrl }: UseWebRTCOptions): UseW
       }
       await pc.setRemoteDescription(new RTCSessionDescription(raw as RTCSessionDescriptionInit));
     } catch (err) {
-      freeSlot(); // connect attempt settled (failed/aborted) — free the slot
+      // A stale attempt (torn down mid-flight) must exit WITHOUT touching the
+      // shared slot/status refs: cleanup() already freed its slot, and calling
+      // freeSlot() here would release the slot now held by its replacement.
+      if (generation !== generationRef.current) return;
+      freeSlot(); // connect attempt settled (failed) — free the slot
       // An intentional teardown (cleanup → abort) is not a real failure.
       if (err instanceof DOMException && err.name === 'AbortError') return;
 
